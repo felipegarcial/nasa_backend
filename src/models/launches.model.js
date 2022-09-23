@@ -6,148 +6,144 @@ const planets = require('./planets.model.mongo');
 const DEFAULT_FLIGHT_NUMBER = 100;
 const SPACEX_API_URL = 'https://api.spacexdata.com/v4/launches/query';
 
-
 const populateLaunches = async () => {
-    const response = await axios.post(SPACEX_API_URL, {
-        query: {},
-        options: {
-            pagination: false,
-            populate: [
-                {
-                    path:'rocket',
-                    select: {
-                        name: 1
-                    }
-                },
-                {
-                    path:'payloads',
-                    select: {
-                        customers: 1
-                    }
-                }
-            ]
-        }
+  const response = await axios.post(SPACEX_API_URL, {
+    query: {},
+    options: {
+      pagination: false,
+      populate: [
+        {
+          path: 'rocket',
+          select: {
+            name: 1,
+          },
+        },
+        {
+          path: 'payloads',
+          select: {
+            customers: 1,
+          },
+        },
+      ],
+    },
+  });
+
+  if (response.status !== 200) {
+    throw new Error('Launch data download failed');
+  }
+
+  const launchDocs = response.data.docs;
+
+  for (const launchDoc of launchDocs) {
+    const payloads = launchDoc['payloads'];
+
+    const customers = payloads.flatMap((payload) => {
+      return payload['customers'];
     });
 
-    if (response.status !== 200) {
-        console.log('Problem downloading launch data');
-        throw new Error('Launch data download failed');
-    }
-
-    const launchDocs = response.data.docs;
-
-    for (const launchDoc of launchDocs) {
-        const payloads = launchDoc['payloads'];
-
-        const customers = payloads.flatMap((payload) => {
-          return payload['customers'];
-        });
-    
-        const launch = {
-          flightNumber: launchDoc['flight_number'],
-          mission: launchDoc['name'],
-          rocket: launchDoc['rocket']['name'],
-          launchDate: launchDoc['date_local'],
-          upcoming: launchDoc['upcoming'],
-          success: launchDoc['success'],
-          customers,
-        };
-    
-        console.log(`${launch.flightNumber} ${launch.mission}`);
-    
-        await saveLaunch(launch);
-    }
-}
+    const launch = {
+      flightNumber: launchDoc['flight_number'],
+      mission: launchDoc['name'],
+      rocket: launchDoc['rocket']['name'],
+      launchDate: launchDoc['date_local'],
+      upcoming: launchDoc['upcoming'],
+      success: launchDoc['success'],
+      customers,
+    };
+    await saveLaunch(launch);
+  }
+};
 const findLaunch = async (filter) => {
-    return await launchesDatabase.findOne(filter);
-}
+  return await launchesDatabase.findOne(filter);
+};
 
 const existLaunchWithId = async (launchId) => {
-    return await findLaunch({
-        flightNumber:launchId
-    });
-}
+  return await findLaunch({
+    flightNumber: launchId,
+  });
+};
 
-const getAllLaunches = (skip,limit) => {
-    return launchesDatabase
-        .find({},{'_id': 0, '__v': 0})
-        .sort({flightNumber: 1})
-        .skip(skip)
-        .limit(limit)
-}
+const getAllLaunches = (skip, limit) => {
+  return launchesDatabase
+    .find({}, { _id: 0, __v: 0 })
+    .sort({ flightNumber: 1 })
+    .skip(skip)
+    .limit(limit);
+};
 
 const getLatestFlightNumber = async () => {
-    const latestLaunch = await launchesDatabase
-        .findOne({})
-        .sort('-flightNumber');
+  const latestLaunch = await launchesDatabase.findOne({}).sort('-flightNumber');
 
-    if(!latestLaunch){
-        return DEFAULT_FLIGHT_NUMBER;
-    }
+  if (!latestLaunch) {
+    return DEFAULT_FLIGHT_NUMBER;
+  }
 
-    return latestLaunch.flightNumber;
-}
+  return latestLaunch.flightNumber;
+};
 
 const saveLaunch = async (launch) => {
-    const isTargetPlanet = planets.findOne({
-        keplerName: launch.target
-    });
+  const isTargetPlanet = planets.findOne({
+    keplerName: launch.target,
+  });
 
-    if(!isTargetPlanet) {
-        throw new Error ('No matching planet found');
-    }
+  if (!isTargetPlanet) {
+    throw new Error('No matching planet found');
+  }
 
-    return await launchesDatabase.findOneAndUpdate({
-        flightNumber: launch.flightNumber
+  return await launchesDatabase.findOneAndUpdate(
+    {
+      flightNumber: launch.flightNumber,
     },
     launch,
     {
-        upsert:true
-    })
-}
+      upsert: true,
+    }
+  );
+};
 
 const scheduleNewLaunch = async (launch) => {
-    const newFlightNumber = await getLatestFlightNumber() + 1;
+  const newFlightNumber = (await getLatestFlightNumber()) + 1;
 
-    const newLaunch =  Object.assign(launch, {
-        success: true,
-        upcoming: true,
-        customers: ['ZTM', 'NASA'],
-        flightNumber: newFlightNumber,
-    });
+  const newLaunch = Object.assign(launch, {
+    success: true,
+    upcoming: true,
+    customers: ['ZTM', 'NASA'],
+    flightNumber: newFlightNumber,
+  });
 
-    await saveLaunch(newLaunch);
+  await saveLaunch(newLaunch);
 };
 
 const abortLaunchById = async (launchId) => {
-    const aborted = await launchesDatabase.updateOne({
-        flightNumber: launchId,
-    }, {
-        upcoming: false,
-        success: false,
-    });
+  const aborted = await launchesDatabase.updateOne(
+    {
+      flightNumber: launchId,
+    },
+    {
+      upcoming: false,
+      success: false,
+    }
+  );
 
-    return aborted.modifiedCount === 1;
-}
+  return aborted.modifiedCount === 1;
+};
 
 const loadLaunchesData = async () => {
-    const firstLunch = await findLaunch({
-        flightNumber: 1,
-        rocket: 'Falcon 1',
-        mission: 'FalconSat'
-    }); 
+  const firstLunch = await findLaunch({
+    flightNumber: 1,
+    rocket: 'Falcon 1',
+    mission: 'FalconSat',
+  });
 
-    if(firstLunch){
-        console.log('Launch data already loded');
-    }else {
-        await populateLaunches();
-    }
-}
+  if (!firstLunch) {
+    await populateLaunches();
+  }
+};
 
 module.exports = {
-    existLaunchWithId,
-    getAllLaunches,
-    scheduleNewLaunch,
-    abortLaunchById,
-    loadLaunchesData
-}
+  existLaunchWithId,
+  getAllLaunches,
+  scheduleNewLaunch,
+  abortLaunchById,
+  loadLaunchesData,
+};
